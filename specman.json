@@ -1,0 +1,9 @@
+{
+  "$schema": "./models/specman.schema.json",
+  "name": "Specification Manager Core",
+  "description": "A specification that details the core functionality of Specification Manager",
+  "tags": ["specification", "standardization"],
+  "spec": {
+    "index": "spec.md"
+  }
+}

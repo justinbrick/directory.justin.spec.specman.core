@@ -1,9 +1,3 @@
----
-name: specman-core
-dependencies:
-  - https://spec.commonmark.org/0.31.2/
----
-
 # Specification — SpecMan Core
 
 The SpecMan Core specification defines both the canonical data model and the platform capabilities that guarantee consistent interactions with SpecMan artifacts. Part 1 establishes the foundational data structures — workspaces, project manifests, specifications, implementations, git references, and SpecMan installing — along with their metadata, naming, and layout rules. Part 2 builds on those structures to define the behavioral guarantees implementers MUST honor: workspace discovery, dependency mapping, reference validation, template orchestration, lifecycle automation, structure indexing, metadata mutation, compliance reporting, workspace status, and SpecMan installing.
@@ -386,7 +380,7 @@ The project manifest is a JSON file named `specman.json` that lives at the root 
 - The `specman.json` file MUST be valid JSON as defined by RFC 8259.
 - The `specman.json` file MUST be UTF-8 encoded.
 - The `specman.json` file SHOULD include a top-level `$schema` field referencing the canonical SpecMan JSON Schema. The schema is defined in [`specman.schema.json`](specman.schema.json), colocated with this specification.
-- The canonical `$schema` value is the URL for [this schema](specman.schema.json).
+- The canonical `$schema` value is the URL for [this schema](models/specman.schema.json).
 
 !concept-project-manifest.mutual-exclusion:
 

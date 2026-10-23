@@ -401,7 +401,7 @@ A GitReference identifies a SpecMan artifact (specification or implementation) v
 
 !entity-gitreference.fields:
 
-- `alias` (string, REQUIRED): A local name for the referenced artifact. This is the handle used to refer to the dependency in local path resolution and symlink naming. The alias SHOULD be stable across versions of the referencing project.
+- `alias` (string, REQUIRED): A local name for the referenced artifact. This is the handle used to refer to the dependency in path resolution and lockfile naming. The alias SHOULD be stable across versions of the referencing project.
 - `url` (string, REQUIRED): The git remote URL. MUST be either an SSH git link (e.g., `git@gitservice.com:owner/repo.git`) or an HTTPS git link (e.g., `https://gitservice.com/owner/repo.git`). The URL MUST be usable as an argument to `git clone`.
 - `ref` (string, REQUIRED): A reference to a specific commit. The value is either a full commit hash or a git tag name. Branches are never consulted; the implementation resolves tags to commit hashes before any clone or checkout operation. If a tag name is supplied, implementations MUST resolve it to its commit hash via `git ls-remote` before use.
 
@@ -469,6 +469,27 @@ Describes one implementation being utilized.
 - `ref` (GitReference, REQUIRED): The implementation being utilized. The referenced artifact MUST be an implementation.
 - `ignore_constraints` (array of string, OPTIONAL): A list of regex patterns. When evaluating compliance, constraint groups from the utilized implementation that match any of these patterns MUST be filtered out and ignored. If the utilized implementation references the same specification as the current implementation but with a different git reference (determined by matching git host and path from `url`, not by name), implementations MUST warn the user during every explicit schema validation or upon pulling dependencies. This field MAY be absent or an empty array, but MUST NOT be null.
 
+## Entity: Lockfile
+
+The top-level structure of a `specman.lock` file. It records the fully resolved dependency graph of a project by capturing the exact commit that each direct and transitive reference maps to.
+
+!entity-lockfile.fields:
+
+- `version` (integer, REQUIRED): The lockfile format version. Implementations MUST reject lockfiles whose version they do not understand.
+- `references` (array of LockedEntry, REQUIRED): The resolved entries for every direct and transitive dependency. Each entry MUST be a [LockedEntry](#entity-lockedentry).
+
+## Entity: LockedEntry
+
+Describes one resolved dependency entry within a [Lockfile](#entity-lockfile).
+
+!entity-lockedentry.fields:
+
+- `alias` (string, REQUIRED): The local name for the referenced artifact, matching the `alias` in the corresponding [GitReference](#entity-gitreference).
+- `url` (string, REQUIRED): The git remote URL of the referenced artifact.
+- `requested` (string, REQUIRED): The reference value as declared in `specman.json` (either a tag name or a commit hash).
+- `resolved` (string, REQUIRED): The full git commit hash that the reference resolved to at generation time. This MUST be a 40-character commit hash identifier.
+- `transitive` (boolean, REQUIRED): Whether the entry is a direct reference declared in `specman.json` (`false`) or a transitively reached dependency (`true`).
+
 # Part 2: Core Behaviors
 
 ## Concept: Workspace Discovery
@@ -517,9 +538,9 @@ Dependency mapping provides visibility into upstream and downstream relationship
 - The implementation MUST construct dependency trees that enumerate upstream providers, downstream consumers, and full transitive relationships.
 - Dependency lookups MUST return results in upstream, downstream, and aggregate forms to support targeted impact analysis.
 - Tree traversal APIs SHOULD expose both hierarchical and flattened views to accommodate varied client needs.
-- Implementations MUST expose a callable dependency-tree builder that accepts a path to a `specman.json` file, a git reference, or an alias that resolves through the global reference cache, and normalizes that locator before traversal begins.
+- Implementations MUST expose a callable dependency-tree builder that accepts a path to a `specman.json` file, a git reference, or an alias that resolves through the project lockfile, and normalizes that locator before traversal begins.
 - The tree builder MUST parse `specman.json` for `spec.references` (for specifications) or `impl.implements` and `impl.utilizes` (for implementations), recursively resolve each upstream artifact, and continue traversal until the graph is fully explored or a cycle is encountered.
-- Resolvers MUST resolve git references by looking them up in the local project's `.specman/ref/` symlink directory first, then in the global cache at `$HOME/.specman/ref/`. If a reference is not found locally, the resolver MAY trigger a clone via [SpecMan Installing](#concept-specman-installing).
+- Resolvers MUST resolve git references by looking them up in the local project's [lockfile](#concept-specman-lockfile) first, then in the project-local `.specman/ref/` directory. If a reference is not found locally, the resolver MAY trigger a clone via [SpecMan Installing](#concept-specman-installing).
 - Cycle detection MUST terminate traversal immediately and return a descriptive error that includes the partial tree gathered so far so callers can remediate invalid dependency graphs.
 - When a referenced dependency or implementation lacks a `specman.json`, or when the dependency cannot be resolved, the tree builder MUST still add the artifact to the dependency set using the best available identifier and annotate the entry to indicate metadata was unavailable.
 
@@ -789,7 +810,7 @@ Workspace status provides a holistic health check of the workspace, aggregating 
 
 ## Concept: SpecMan Installing
 
-SpecMan Installing is the process of resolving all git-referenced dependencies for a project and making them available locally. It delegates all git operations to the user's `git` CLI, piggybacking on the user's existing authentication and configuration.
+SpecMan Installing is the process of resolving all git-referenced dependencies for a project and materializing them locally. It delegates all git operations to the user's `git` CLI, piggybacking on the user's existing authentication and configuration.
 
 !concept-specman-installing.git-delegation:
 
@@ -803,43 +824,43 @@ SpecMan Installing is the process of resolving all git-referenced dependencies f
 - The recursion depth MUST NOT exceed 10 levels.
 - If recursion exceeds 10 levels, the install MUST fail with a descriptive error listing the dependency chain that caused the overflow.
 
-!concept-specman-installing.symlink-structure:
+!concept-specman-installing.build-artifact:
 
-- After resolving references, implementations MUST create symlinks under the project's `.specman/ref/` directory.
-- Each symlink name MUST be the `alias` from the corresponding [GitReference](#entity-gitreference).
-- Each symlink MUST point to the corresponding directory in the global reference cache (`$HOME/.specman/ref/{ref_name}`).
-- If a symlink with the same alias already exists, implementations MUST update it to point to the resolved reference.
+- The project's `.specman/` directory and its `ref/` and `cache/` subdirectories MUST be treated as machine-generated build artifacts and MUST NOT be committed to version control.
+- Installations MUST place each resolved artifact in its own directory under `.specman/ref/{alias}/`, where `{alias}` is the `alias` field of the corresponding [GitReference](#entity-gitreference).
+- Each artifact MUST be a full, physical copy of the repository contents at the resolved commit. Implementations MUST NOT use symlinks or shared object stores to reference content located outside the project.
+- The lifetime of a reference copy MUST be tied to the project: deleting the project (or its `.specman/` directory) MUST also remove all reference copies. Dependencies MUST be re-resolved by a subsequent install when their copies are removed.
+- Before writing an artifact, implementations MUST resolve any tag reference to a commit hash (see [Entity: GitReference](#entity-gitreference)) and MUST checkout the exact resolved commit.
+- Installations MUST update the project [lockfile](#concept-specman-lockfile) so that it reflects the fully resolved dependency graph, as defined in [Entity: Lockfile](#entity-lockfile).
+- Installing MUST be reproducible: given a lockfile and a `specman.json`, a re-install MUST produce the same set of reference copies, byte-for-byte, regardless of when or where it is run.
 
-## Concept: Global Reference Cache
+## Concept: SpecMan Lockfile
 
-SpecMan maintains a global cache of cloned references under the user's home directory to avoid redundant clones across projects.
+A lockfile records the fully resolved dependency graph of a project — the exact commit that each direct and transitive reference maps to — so that installations are reproducible across time and machines without re-deriving mutable tag references.
 
-!concept-global-reference-cache.location:
+!concept-specman-lockfile.location:
 
-- The global cache root MUST be `$HOME/.specman/ref/`.
-- Each cloned artifact MUST be stored under `$HOME/.specman/ref/{ref_name}/`.
+- The lockfile MUST be named `specman.lock` and MUST reside at the repository root, alongside `specman.json`.
+- The lockfile MUST be committed to version control so that every checkout reproduces the same resolved graph.
+- The lockfile MUST be valid JSON as defined by RFC 8259 and MUST be UTF-8 encoded.
 
-!concept-global-reference-cache.naming:
+!concept-specman-lockfile.generation:
 
-- The reference directory name (`ref_name`) MUST be computed as: `{host}_{path}_{hash}`, where:
-  - `host` is the domain of the git server (e.g., `github.com`).
-  - `path` is the repository path with the `.git` suffix stripped (e.g., `owner/repo`).
-  - `hash` is the full git commit hash of the resolved reference.
-- All three components MUST be joined with underscore (`_`) separators.
-- Example: for `https://github.com/owner/spec-repo.git` at commit `abc123def456...`, the ref_name is `github.com_owner/spec-repo_abc123def456...`.
+- Install and update operations MUST (re)generate the lockfile by resolving the direct references in `specman.json` and, recursively, all transitively referenced artifacts.
+- Each entry in the lockfile MUST record the resolved commit hash for the corresponding reference. When a reference specifies a tag, the hash MUST be the commit resolved from that tag at generation time.
+- The lockfile MUST be written atomically so that a partially written file is never observable to other processes.
+- Implementations MUST NOT resolve tag references dynamically during an install that is driven by an existing lockfile; the locked hash MUST take precedence.
 
-!concept-global-reference-cache.clone-rules:
+!concept-specman-lockfile.conflict:
 
-- Before cloning, implementations MUST resolve any tag reference to a commit hash (see [Entity: GitReference](#entity-gitreference)).
-- Implementations MUST clone the repository into the global cache using `git clone`.
-- After cloning, implementations MUST checkout the exact commit hash.
-- Each unique `(host, path, hash)` tuple MUST produce exactly one cache directory. Implementations MUST check for an existing directory before cloning and reuse it if present.
+- When a lockfile is present but no longer matches the current `specman.json` (for example, a `ref` tag that resolves to a different hash, or a reference alias or `url` that changed), the implementation MUST treat this as a conflict.
+- On conflict, the implementation MUST fail with a descriptive error instructing the user to run an update operation that re-resolves the graph and regenerates the lockfile.
+- Tooling MUST NOT silently overwrite or ignore a lockfile that diverges from `specman.json`.
 
-!concept-global-reference-cache.cleanup:
+!concept-specman-lockfile.detached:
 
-- The global cache MAY accumulate unused entries over time.
-- Implementations MAY provide a cleanup command that removes cache entries not referenced by any known project.
-- Implementations MUST NOT automatically delete cache entries without explicit user action.
+- An install that is driven by a list of locked entries but that does not also require the source repository to be present MUST NOT mutate the project's references.
+- Implementations MAY offer an integrity check that verifies each locked hash against the materialized reference copy.
 
 
 ---

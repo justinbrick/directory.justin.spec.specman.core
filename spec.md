@@ -401,7 +401,7 @@ A GitReference identifies a SpecMan artifact (specification or implementation) v
 
 !entity-gitreference.fields:
 
-- `alias` (string, REQUIRED): A local name for the referenced artifact. This is the handle used to refer to the dependency in path resolution and lockfile naming. The alias SHOULD be stable across versions of the referencing project.
+- `alias` (string, REQUIRED): A local name for the referenced artifact. This is the handle used to refer to the dependency in path resolution and lockfile naming. The alias SHOULD be stable across versions of the referencing project. The alias MUST be a portable filename segment matching `^[A-Za-z0-9][A-Za-z0-9._-]*$`.
 - `url` (string, REQUIRED): The git remote URL. MUST be either an SSH git link (e.g., `git@gitservice.com:owner/repo.git`) or an HTTPS git link (e.g., `https://gitservice.com/owner/repo.git`). The URL MUST be usable as an argument to `git clone`.
 - `ref` (string, REQUIRED): A reference to a specific commit. The value is either a full commit hash or a git tag name. Branches are never consulted; the implementation resolves tags to commit hashes before any clone or checkout operation. If a tag name is supplied, implementations MUST resolve it to its commit hash via `git ls-remote` before use.
 
@@ -410,9 +410,18 @@ A GitReference identifies a SpecMan artifact (specification or implementation) v
 - If `ref` is a tag name (i.e., it is not a 40-character hex string), implementations MUST resolve it to a commit hash using `git ls-remote --tags {url} {ref}` before performing any clone.
 - If tag resolution fails, the implementation MUST fail with a descriptive error.
 
-!entity-gitreference.identity-matching:
+!entity-gitreference.alias-format:
 
-- For the purpose of determining whether two `GitReference` values refer to the same artifact, implementations MUST compare the git host and path extracted from `url` (e.g., `example.com/owner/repo`), ignoring the scheme (SSH vs HTTPS) and the `.git` suffix.
+- An alias MUST be a portable filename segment and MUST match `^[A-Za-z0-9][A-Za-z0-9._-]*$`.
+- Because aliases are used as directory-name segments, they MUST NOT contain path separators (`/`, `\`) or any character reserved by a supported filesystem.
+- Implementations SHOULD additionally reject aliases that are case-insensitively equal to a Windows reserved device name (e.g., `CON`, `PRN`, `AUX`, `NUL`, `COM1`-`COM9`, `LPT1`-`LPT9`) or that end with a dot or space.
+- The `::` sequence is reserved as the alias qualifier separator. It MUST NOT appear within an alias and MUST only ever appear in the logical qualified alias path, never in a filesystem path (see [qualified alias paths](#concept-dependency-conflict-resolution)).
+
+!entity-gitreference.site-identity:
+
+- The artifact site is a normalized identity derived from the `url` of a [GitReference](#entity-gitreference). Implementations MUST derive the site by extracting the git host and path and normalizing them to the form `{host}/{path}` (e.g., `example.com/owner/repo`).
+- Site derivation MUST ignore the URL scheme (SSH vs HTTPS) and the `.git` suffix.
+- Two `GitReference` values refer to the same artifact if and only if their derived sites are equal.
 
 ## Entity: SpecManProject
 
@@ -426,12 +435,27 @@ The top-level structure of a `specman.json` file.
 - `tags` (array of string, OPTIONAL): Tags for categorization. MAY be absent or an empty array, but MUST NOT be null.
 - `spec` (object, OPTIONAL): Present if and only if this project is a specification. See [Entity: SpecProject](#entity-specproject).
 - `impl` (object, OPTIONAL): Present if and only if this project is an implementation. See [Entity: ImplProject](#entity-implproject).
+- `overrides` (array of OverrideEntry, OPTIONAL): Explicit version resolutions applied during dependency resolution. MAY be absent or an empty array, but MUST NOT be null. See [Entity: OverrideEntry](#entity-overrideentry).
 
 !entity-specmanproject.mutual-exclusion:
 
 - Exactly one of `spec` or `impl` MUST be present.
 - The other MUST be absent (not present as a key).
 - Neither `spec` nor `impl` may be `null`.
+
+## Entity: OverrideEntry
+
+An OverrideEntry pins an artifact, identified by its [site](#entity-gitreference), to an explicit commit or tag. It resolves version conflicts by forcing every reference to that artifact to a single version.
+
+!entity-overrideentry.fields:
+
+- `site` (string, REQUIRED): The normalized artifact site as defined in [Entity: GitReference](#entity-gitreference). Overrides MUST match by site, not by alias.
+- `ref` (string, REQUIRED): The commit hash or git tag name to force for every reference whose derived site matches `site`. Branches MUST NOT be used; tags MUST be resolved to commit hashes as described in [Entity: GitReference](#entity-gitreference).
+
+!entity-overrideentry.constraints:
+
+- The `overrides` array MUST NOT contain two entries with the same `site`.
+- If an `overrides` entry's `site` does not correspond to any reference in the resolved dependency graph, implementations SHOULD emit a warning and MUST NOT fail.
 
 ## Entity: SpecProject
 
@@ -485,6 +509,7 @@ Describes one resolved dependency entry within a [Lockfile](#entity-lockfile).
 !entity-lockedentry.fields:
 
 - `alias` (string, REQUIRED): The local name for the referenced artifact, matching the `alias` in the corresponding [GitReference](#entity-gitreference).
+- `path` (string, REQUIRED): The qualified alias path — the `::`-joined chain of aliases from the dependency root to this reference (e.g., `B::D`). For a direct reference, `path` MUST equal `alias`. Implementations MUST derive the on-disk materialization location from `path` as defined in [SpecMan Installing](#concept-specman-installing).
 - `url` (string, REQUIRED): The git remote URL of the referenced artifact.
 - `requested` (string, REQUIRED): The reference value as declared in `specman.json` (either a tag name or a commit hash).
 - `resolved` (string, REQUIRED): The full git commit hash that the reference resolved to at generation time. This MUST be a 40-character commit hash identifier.
@@ -543,6 +568,32 @@ Dependency mapping provides visibility into upstream and downstream relationship
 - Resolvers MUST resolve git references by looking them up in the local project's [lockfile](#concept-specman-lockfile) first, then in the project-local `.specman/ref/` directory. If a reference is not found locally, the resolver MAY trigger a clone via [SpecMan Installing](#concept-specman-installing).
 - Cycle detection MUST terminate traversal immediately and return a descriptive error that includes the partial tree gathered so far so callers can remediate invalid dependency graphs.
 - When a referenced dependency or implementation lacks a `specman.json`, or when the dependency cannot be resolved, the tree builder MUST still add the artifact to the dependency set using the best available identifier and annotate the entry to indicate metadata was unavailable.
+
+## Concept: Dependency Conflict Resolution
+
+Dependency conflict resolution ensures that when multiple artifacts in a dependency graph reference the same artifact at different versions, the conflict is either resolved explicitly via an override or surfaced as an error, rather than resolved to an ambiguous version.
+
+!concept-dependency-conflict-resolution.detection:
+
+- Conflict detection MUST compare artifacts by [site](#entity-gitreference), not by alias. Two references with different aliases but the same derived site MUST be treated as references to the same artifact.
+- A version conflict exists when two or more references in the resolved dependency graph have the same site but resolve to different commit hashes.
+- References with the same site and the same resolved commit hash MUST NOT be reported as a conflict.
+- A qualified alias path is the `::`-joined chain of aliases from the root of the dependency graph to a reference (for example `B::D`). Implementations SHOULD use qualified alias paths to disambiguate references in diagnostics.
+- The `::` separator exists only in the logical qualified alias path and MUST NOT be used in a filesystem path. On disk, a qualified alias path maps to nested directories as defined in [SpecMan Installing](#concept-specman-installing).
+- Detection MUST be performed during dependency resolution, before artifacts are materialized.
+
+!concept-dependency-conflict-resolution.override:
+
+- An explicit override, declared via the top-level `overrides` array in `specman.json`, MUST pin the artifact's site to a single `ref`.
+- When an override applies to a site, every reference with that site MUST resolve to the commit specified by the override's `ref`, regardless of the alias or `ref` declared by the individual references.
+- Overrides MUST be applied before conflict detection. A site that is fully pinned by an override MUST NOT be reported as a conflict.
+- The commit produced by an override MUST be recorded in the lockfile's `resolved` field for the corresponding references.
+
+!concept-dependency-conflict-resolution.failure:
+
+- When a version conflict exists and no override applies, the implementation MUST fail with a descriptive error.
+- The error MUST identify the conflicting artifact site, the distinct resolved commit hashes, and, for each version, the qualified alias path and the declaring artifact.
+- The error MUST instruct the author to add an `overrides` entry for the conflicting site.
 
 ## Concept: Reference Validation
 
@@ -729,6 +780,7 @@ Metadata mutation ensures `specman.json` for specifications and implementations 
 - Metadata mutation MUST be supported for specification and implementation artifacts.
 - For specifications, metadata mutation MUST support updating `name`, `description`, `tags`, and adding/removing entries in the `spec.references` list.
 - For implementations, metadata mutation MUST support updating `name`, `description`, `tags`, and adding/removing entries in the `impl.implements` and `impl.utilizes` lists.
+- For both specifications and implementations, metadata mutation MUST support adding/removing entries in the top-level `overrides` list.
 
 ## Concept: Validation Anchors
 
@@ -823,12 +875,15 @@ SpecMan Installing is the process of resolving all git-referenced dependencies f
 - Installing MUST recursively resolve all transitively referenced artifacts.
 - The recursion depth MUST NOT exceed 10 levels.
 - If recursion exceeds 10 levels, the install MUST fail with a descriptive error listing the dependency chain that caused the overflow.
+- Installing MUST enforce [Dependency Conflict Resolution](#concept-dependency-conflict-resolution) during recursive resolution.
 
 !concept-specman-installing.build-artifact:
 
 - The project's `.specman/` directory and its `ref/` and `cache/` subdirectories MUST be treated as machine-generated build artifacts and MUST NOT be committed to version control.
-- Installations MUST place each resolved artifact in its own directory under `.specman/ref/{alias}/`, where `{alias}` is the `alias` field of the corresponding [GitReference](#entity-gitreference).
-- Each artifact MUST be a full, physical copy of the repository contents at the resolved commit. Implementations MUST NOT use symlinks or shared object stores to reference content located outside the project.
+- Installations MUST place each directly referenced artifact in its own directory under `.specman/ref/{alias}/`, where `{alias}` is the `alias` field of the corresponding [GitReference](#entity-gitreference).
+- Transitive dependencies MUST be materialized recursively: the dependencies of an artifact at `.specman/ref/{alias}/` MUST be placed under `.specman/ref/{alias}/.specman/ref/{sub-alias}/`, applying the same rule at every level of the dependency graph.
+- The on-disk location of an artifact MUST be derived from its [qualified alias path](#concept-dependency-conflict-resolution): the logical `::` separator maps to the on-disk segment sequence `/.specman/ref/`. For example, the qualified path `B::D` materializes at `.specman/ref/B/.specman/ref/D/`.
+- Each artifact MUST be a full, physical copy of its repository contents at the resolved commit, placed directly under its materialization directory. The nested `.specman/ref/` subtree within that directory is machine-generated dependency scope and MUST NOT be treated as part of the artifact's repository contents. Implementations MUST NOT use symlinks or shared object stores to reference content located outside the project.
 - The lifetime of a reference copy MUST be tied to the project: deleting the project (or its `.specman/` directory) MUST also remove all reference copies. Dependencies MUST be re-resolved by a subsequent install when their copies are removed.
 - Before writing an artifact, implementations MUST resolve any tag reference to a commit hash (see [Entity: GitReference](#entity-gitreference)) and MUST checkout the exact resolved commit.
 - Installations MUST update the project [lockfile](#concept-specman-lockfile) so that it reflects the fully resolved dependency graph, as defined in [Entity: Lockfile](#entity-lockfile).
@@ -848,6 +903,7 @@ A lockfile records the fully resolved dependency graph of a project — the exac
 
 - Install and update operations MUST (re)generate the lockfile by resolving the direct references in `specman.json` and, recursively, all transitively referenced artifacts.
 - Each entry in the lockfile MUST record the resolved commit hash for the corresponding reference. When a reference specifies a tag, the hash MUST be the commit resolved from that tag at generation time.
+- Each entry MUST record its qualified alias path in the `path` field, from which the on-disk materialization location is derived.
 - The lockfile MUST be written atomically so that a partially written file is never observable to other processes.
 - Implementations MUST NOT resolve tag references dynamically during an install that is driven by an existing lockfile; the locked hash MUST take precedence.
 

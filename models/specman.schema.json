@@ -32,6 +32,13 @@
         },
         "impl": {
             "$ref": "#/$defs/ImplProject"
+        },
+        "overrides": {
+            "type": "array",
+            "items": {
+                "$ref": "#/$defs/OverrideEntry"
+            },
+            "description": "Explicit version resolutions applied during dependency resolution. May be absent or an empty array, but must not be null."
         }
     },
     "oneOf": [
@@ -77,7 +84,8 @@
             "properties": {
                 "alias": {
                     "type": "string",
-                    "description": "A local name for the referenced artifact. Used in local path resolution and lockfile naming. Should be stable across versions of the referencing project."
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+                    "description": "A local name for the referenced artifact. Used in local path resolution and lockfile naming. Should be stable across versions of the referencing project. Must be a portable filename segment matching ^[A-Za-z0-9][A-Za-z0-9._-]*$."
                 },
                 "url": {
                     "type": "string",
@@ -172,10 +180,31 @@
             },
             "additionalProperties": false
         },
+        "OverrideEntry": {
+            "type": "object",
+            "required": [
+                "site",
+                "ref"
+            ],
+            "properties": {
+                "site": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "The normalized artifact site (host/path), as derived from a GitReference url. Overrides match by site, not alias."
+                },
+                "ref": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "The commit hash or git tag to force for every reference whose derived site matches."
+                }
+            },
+            "additionalProperties": false
+        },
         "LockedEntry": {
             "type": "object",
             "required": [
                 "alias",
+                "path",
                 "url",
                 "requested",
                 "resolved",
@@ -185,6 +214,10 @@
                 "alias": {
                     "type": "string",
                     "description": "The local name for the referenced artifact, matching the alias in the corresponding GitReference."
+                },
+                "path": {
+                    "type": "string",
+                    "description": "The qualified alias path (the '::'-joined chain of aliases from the dependency root to this reference). For a direct reference this equals alias. Used to derive the on-disk materialization location."
                 },
                 "url": {
                     "type": "string",

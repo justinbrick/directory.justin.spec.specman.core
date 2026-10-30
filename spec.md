@@ -19,16 +19,16 @@ A SpecMan workspace is the directory in which SpecMan tooling can be used. Each 
 !concept-specman-workspace.dot-folder:
 
 - The SpecMan dot folder MUST be named `.specman` and is used to store tooling state, metadata, and other implementation-specific files that belong to the workspace.
-- The presence of a top-level `.specman` directory is the canonical indicator that a directory is a SpecMan workspace root.
-- Implementations SHOULD treat the nearest ancestor directory containing a `.specman` folder as the workspace root when tools are invoked from within a subdirectory.
-- Tools MAY search parent directories for a `.specman` folder.
-- When multiple `.specman` folders are found along the ancestry chain, the nearest one to the current working directory SHOULD be selected as the active workspace root.
+- The `.specman` directory is machine-generated runtime state; it is NOT the workspace root indicator and MUST NOT be used to detect the workspace boundary.
+- Implementations MUST treat the git repository toplevel (the nearest ancestor containing the `.git` directory) as the workspace root.
 
 !concept-specman-workspace.git-co-location:
 
-- The `.specman/` directory and a `.git/` directory MUST exist at the same directory level.
+- The workspace root MUST be the git repository toplevel: the directory that directly contains the `.git/` directory.
+- A `specman.json` manifest MUST exist at the workspace root. The workspace lifecycle is bound to the git repository's lifetime.
 - Tooling MUST verify that a git repository exists at the workspace root before performing initialization or validation operations.
 - If no git repository exists, tooling MUST fail with a descriptive error instructing the user to run `git init` first.
+- The `.specman/` directory, when present, MUST exist at the workspace root (the same directory level as `.git/`).
 - Tooling MUST NOT support monorepo layouts (multiple `specman.json` files under a single `.git/` directory). Each SpecMan project requires its own dedicated git repository.
 
 ## Concept: Specifications
@@ -370,7 +370,7 @@ The project manifest is a JSON file named `specman.json` that lives at the root 
 
 !concept-project-manifest.location:
 
-- The `specman.json` file MUST reside at the repository root (the same directory that contains the `.git/` and `.specman/` directories).
+- The `specman.json` file MUST reside at the repository root (the git repository toplevel, the same directory that contains the `.git/` directory).
 - The `specman.json` file MUST NOT be added to any `.gitignore` file within the repository.
 - Implementations that perform initialization MUST ensure a git repository exists at the same level as the `specman.json` file they create or validate.
   - If no git repository exists, the implementation MUST fail with a descriptive error instructing the user to run `git init` first.
@@ -519,26 +519,27 @@ Describes one resolved dependency entry within a [Lockfile](#entity-lockfile).
 
 ## Concept: Workspace Discovery
 
-Workspace discovery ensures every SpecMan-aware tool can deterministically locate the active workspace root and its `.specman` directory from any starting location.
+Workspace discovery ensures every SpecMan-aware tool can deterministically locate the active workspace root from any starting location.
 
 !concept-workspace-discovery.requirements:
 
-- The implementation MUST identify the workspace root by scanning the current directory and its ancestors for the nearest `.specman` folder, treating the containing directory as canonical.
-- The workspace root MUST also contain a `.git/` directory at the same level as `.specman/`. If `.specman/` is found but `.git/` is absent at the same level, the implementation MUST return a descriptive error.
-- When no `.specman` folder exists along the ancestry chain, the implementation MUST return a descriptive error that callers MAY surface directly to users.
+- The implementation MUST identify the workspace root by scanning the current directory and its ancestors for the nearest `.git/` directory, treating the directory that contains it (the git toplevel) as the workspace root.
+- The implementation SHOULD delegate toplevel discovery to the user's `git` command (for example `git rev-parse --show-toplevel`), consistent with the git delegation rules elsewhere in this specification.
+- A `specman.json` manifest MUST exist at the workspace root. If the git toplevel is found but `specman.json` is absent at that level, the implementation MUST return a descriptive error.
+- When no git repository exists along the ancestry chain, the implementation MUST return a descriptive error that callers MAY surface directly to users.
 - Workspace discovery utilities MUST expose the absolute path to both the workspace root and the `.specman` directory so downstream services can reference shared metadata without recomputing filesystem state.
 - Resolved workspace metadata MUST remain consistent with the data model rules for SpecMan workspaces (see [Concept: SpecMan Workspace](#concept-specman-workspace)) and MUST reuse existing data-model entities when emitting structured results.
-- Implementations MAY cache the active workspace root for the lifetime of a command invocation, but they MUST revalidate that the `.specman` folder still exists before reusing cached paths.
+- Implementations MAY cache the active workspace root for the lifetime of a command invocation, but they MUST revalidate that the git toplevel and `specman.json` still exist before reusing cached paths.
 
 !concept-workspace-discovery.initialization:
 
-- The implementation MUST expose an initializer that accepts an absolute filesystem path provided by the caller and resolves it to the canonical workspace root and `.specman` directory using the same rules as workspace discovery.
-- The initializer MUST accept both workspace-root paths and `.specman` directory paths as valid inputs; in either case it MUST return normalized absolute paths for both the workspace root and `.specman` directory without redundant ancestor search.
-- The initializer MUST validate that the supplied path is (or contains) a `.specman` directory; if validation fails, it MUST either create `.specman` (when allowed by the invocation) or return a descriptive error suitable for direct user display, and it MUST NOT fall back to scanning unrelated ancestor paths.
-- When creation is requested and a `.specman` directory is absent at the provided root, the initializer MUST create the `.specman` directory at that root, enforce workspace-boundary rules, and then return normalized paths; it MUST NOT create nested `.specman` directories beneath an existing workspace.
-- The implementation MUST expose a library-level workspace creator that provisions `.specman` at an explicit path (including required subdirectories such as `spec/` and `cache/` when defined), performs the same validation as the initializer, and keeps the operation idempotent so future workspace-owned files can be added by the implementation rather than by ad-hoc folder creation.
-- The initializer MUST reject relative paths and paths that imply nested workspace creation; callers MUST supply the intended workspace root explicitly rather than relying on automatic ascent from arbitrary subpaths.
-- The initializer MAY reuse discovery caches only when the cached workspace root matches the normalized result for the supplied path; otherwise it MUST revalidate (and, if needed, create) the `.specman` directory before returning paths.
+- The implementation MUST expose an initializer that accepts an absolute filesystem path provided by the caller and resolves it to the canonical workspace root using the same rules as workspace discovery.
+- The initializer MUST accept both workspace-root paths and subdirectory paths as valid inputs; in either case it MUST return the normalized absolute path to the workspace root without redundant ancestor search.
+- The initializer MUST validate that the supplied path is (or resolves into) a git repository toplevel containing a `specman.json`; if validation fails, it MUST return a descriptive error suitable for direct user display, and it MUST NOT fall back to scanning unrelated ancestor paths.
+- The initializer MUST NOT create a `.specman` directory or a `specman.json` manifest implicitly; creation of the workspace and its manifest MUST be an explicit, separate operation.
+- The implementation MUST expose a library-level workspace creator that provisions the workspace at an explicit path (including a `specman.json` and the required subdirectories such as `spec/` and `cache/` when defined), performs the same validation as the initializer, and keeps the operation idempotent so future workspace-owned files can be added by the implementation rather than by ad-hoc folder creation.
+- The initializer MUST reject relative paths; callers MUST supply the intended workspace root explicitly rather than relying on automatic ascent from arbitrary subpaths.
+- The initializer MAY reuse discovery caches only when the cached workspace root matches the normalized result for the supplied path; otherwise it MUST revalidate the git toplevel and `specman.json` before returning paths.
 
 ## Concept: Data Model Backing Implementation
 
@@ -797,7 +798,7 @@ Validation scanning defines how tooling discovers anchors within an implementati
 
 !concept-validation-scanning.scope:
 
-- Tooling MUST resolve the implementation's source code root as the workspace root (the directory containing `.specman/` and `specman.json`).
+- Tooling MUST resolve the implementation's source code root as the workspace root (the git toplevel containing `specman.json`).
 - The scanner MUST recursively traverse the source directory to identify files for analysis.
 
 !concept-validation-scanning.filtering:

@@ -415,7 +415,7 @@ A GitReference identifies a SpecMan artifact (specification or implementation) v
 - An alias MUST be a portable filename segment and MUST match `^[A-Za-z0-9][A-Za-z0-9._-]*$`.
 - Because aliases are used as directory-name segments, they MUST NOT contain path separators (`/`, `\`) or any character reserved by a supported filesystem.
 - Implementations SHOULD additionally reject aliases that are case-insensitively equal to a Windows reserved device name (e.g., `CON`, `PRN`, `AUX`, `NUL`, `COM1`-`COM9`, `LPT1`-`LPT9`) or that end with a dot or space.
-- The `::` sequence is reserved as the alias qualifier separator. It MUST NOT appear within an alias and MUST only ever appear in the logical qualified alias path, never in a filesystem path (see [qualified alias paths](#concept-dependency-conflict-resolution)).
+
 
 !entity-gitreference.site-identity:
 
@@ -509,7 +509,7 @@ Describes one resolved dependency entry within a [Lockfile](#entity-lockfile).
 !entity-lockedentry.fields:
 
 - `alias` (string, REQUIRED): The local name for the referenced artifact, matching the `alias` in the corresponding [GitReference](#entity-gitreference).
-- `path` (string, REQUIRED): The qualified alias path — the `::`-joined chain of aliases from the dependency root to this reference (e.g., `B::D`). For a direct reference, `path` MUST equal `alias`. Implementations MUST derive the on-disk materialization location from `path` as defined in [SpecMan Installing](#concept-specman-installing).
+- `path` (string, REQUIRED): The nested filesystem path to the reference's materialization location, relative to the workspace root (for example `spec/B/spec/D/`). For a direct reference, `path` MUST be `spec/{alias}/`. Implementations MUST derive the on-disk materialization location from `path` as defined in [SpecMan Installing](#concept-specman-installing).
 - `url` (string, REQUIRED): The git remote URL of the referenced artifact.
 - `requested` (string, REQUIRED): The reference value as declared in `specman.json` (either a tag name or a commit hash).
 - `resolved` (string, REQUIRED): The full git commit hash that the reference resolved to at generation time. This MUST be a 40-character commit hash identifier.
@@ -536,7 +536,7 @@ Workspace discovery ensures every SpecMan-aware tool can deterministically locat
 - The initializer MUST accept both workspace-root paths and `.specman` directory paths as valid inputs; in either case it MUST return normalized absolute paths for both the workspace root and `.specman` directory without redundant ancestor search.
 - The initializer MUST validate that the supplied path is (or contains) a `.specman` directory; if validation fails, it MUST either create `.specman` (when allowed by the invocation) or return a descriptive error suitable for direct user display, and it MUST NOT fall back to scanning unrelated ancestor paths.
 - When creation is requested and a `.specman` directory is absent at the provided root, the initializer MUST create the `.specman` directory at that root, enforce workspace-boundary rules, and then return normalized paths; it MUST NOT create nested `.specman` directories beneath an existing workspace.
-- The implementation MUST expose a library-level workspace creator that provisions `.specman` at an explicit path (including required subdirectories such as `ref/` and `cache/` when defined), performs the same validation as the initializer, and keeps the operation idempotent so future workspace-owned files can be added by the implementation rather than by ad-hoc folder creation.
+- The implementation MUST expose a library-level workspace creator that provisions `.specman` at an explicit path (including required subdirectories such as `spec/` and `cache/` when defined), performs the same validation as the initializer, and keeps the operation idempotent so future workspace-owned files can be added by the implementation rather than by ad-hoc folder creation.
 - The initializer MUST reject relative paths and paths that imply nested workspace creation; callers MUST supply the intended workspace root explicitly rather than relying on automatic ascent from arbitrary subpaths.
 - The initializer MAY reuse discovery caches only when the cached workspace root matches the normalized result for the supplied path; otherwise it MUST revalidate (and, if needed, create) the `.specman` directory before returning paths.
 
@@ -565,7 +565,7 @@ Dependency mapping provides visibility into upstream and downstream relationship
 - Tree traversal APIs SHOULD expose both hierarchical and flattened views to accommodate varied client needs.
 - Implementations MUST expose a callable dependency-tree builder that accepts a path to a `specman.json` file, a git reference, or an alias that resolves through the project lockfile, and normalizes that locator before traversal begins.
 - The tree builder MUST parse `specman.json` for `spec.references` (for specifications) or `impl.implements` and `impl.utilizes` (for implementations), recursively resolve each upstream artifact, and continue traversal until the graph is fully explored or a cycle is encountered.
-- Resolvers MUST resolve git references by looking them up in the local project's [lockfile](#concept-specman-lockfile) first, then in the project-local `.specman/ref/` directory. If a reference is not found locally, the resolver MAY trigger a clone via [SpecMan Installing](#concept-specman-installing).
+- Resolvers MUST resolve git references by looking them up in the local project's [lockfile](#concept-specman-lockfile) first, then in the project-local `spec/` directory. If a reference is not found locally, the resolver MAY trigger a clone via [SpecMan Installing](#concept-specman-installing).
 - Cycle detection MUST terminate traversal immediately and return a descriptive error that includes the partial tree gathered so far so callers can remediate invalid dependency graphs.
 - When a referenced dependency or implementation lacks a `specman.json`, or when the dependency cannot be resolved, the tree builder MUST still add the artifact to the dependency set using the best available identifier and annotate the entry to indicate metadata was unavailable.
 
@@ -578,8 +578,7 @@ Dependency conflict resolution ensures that when multiple artifacts in a depende
 - Conflict detection MUST compare artifacts by [site](#entity-gitreference), not by alias. Two references with different aliases but the same derived site MUST be treated as references to the same artifact.
 - A version conflict exists when two or more references in the resolved dependency graph have the same site but resolve to different commit hashes.
 - References with the same site and the same resolved commit hash MUST NOT be reported as a conflict.
-- A qualified alias path is the `::`-joined chain of aliases from the root of the dependency graph to a reference (for example `B::D`). Implementations SHOULD use qualified alias paths to disambiguate references in diagnostics.
-- The `::` separator exists only in the logical qualified alias path and MUST NOT be used in a filesystem path. On disk, a qualified alias path maps to nested directories as defined in [SpecMan Installing](#concept-specman-installing).
+- A reference is referred to by its nested filesystem path — the chain of alias directory segments from the workspace root (for example `spec/B/spec/D/`). Implementations SHOULD use nested filesystem paths to disambiguate references in diagnostics.
 - Detection MUST be performed during dependency resolution, before artifacts are materialized.
 
 !concept-dependency-conflict-resolution.override:
@@ -592,7 +591,7 @@ Dependency conflict resolution ensures that when multiple artifacts in a depende
 !concept-dependency-conflict-resolution.failure:
 
 - When a version conflict exists and no override applies, the implementation MUST fail with a descriptive error.
-- The error MUST identify the conflicting artifact site, the distinct resolved commit hashes, and, for each version, the qualified alias path and the declaring artifact.
+- The error MUST identify the conflicting artifact site, the distinct resolved commit hashes, and, for each version, the nested filesystem path and the declaring artifact.
 - The error MUST instruct the author to add an `overrides` entry for the conflicting site.
 
 ## Concept: Reference Validation
@@ -879,12 +878,12 @@ SpecMan Installing is the process of resolving all git-referenced dependencies f
 
 !concept-specman-installing.build-artifact:
 
-- The project's `.specman/` directory and its `ref/` and `cache/` subdirectories MUST be treated as machine-generated build artifacts and MUST NOT be committed to version control.
-- Installations MUST place each directly referenced artifact in its own directory under `.specman/ref/{alias}/`, where `{alias}` is the `alias` field of the corresponding [GitReference](#entity-gitreference).
-- Transitive dependencies MUST be materialized recursively: the dependencies of an artifact at `.specman/ref/{alias}/` MUST be placed under `.specman/ref/{alias}/.specman/ref/{sub-alias}/`, applying the same rule at every level of the dependency graph.
-- The on-disk location of an artifact MUST be derived from its [qualified alias path](#concept-dependency-conflict-resolution): the logical `::` separator maps to the on-disk segment sequence `/.specman/ref/`. For example, the qualified path `B::D` materializes at `.specman/ref/B/.specman/ref/D/`.
-- Each artifact MUST be a full, physical copy of its repository contents at the resolved commit, placed directly under its materialization directory. The nested `.specman/ref/` subtree within that directory is machine-generated dependency scope and MUST NOT be treated as part of the artifact's repository contents. Implementations MUST NOT use symlinks or shared object stores to reference content located outside the project.
-- The lifetime of a reference copy MUST be tied to the project: deleting the project (or its `.specman/` directory) MUST also remove all reference copies. Dependencies MUST be re-resolved by a subsequent install when their copies are removed.
+- The project's `.specman/` directory and its `cache/` subdirectory MUST be treated as machine-generated build artifacts and MUST NOT be committed to version control. The `spec/` directory MUST likewise be treated as machine-generated and MUST NOT be committed.
+- Installations MUST place each directly referenced artifact in its own directory under `spec/{alias}/`, where `{alias}` is the `alias` field of the corresponding [GitReference](#entity-gitreference).
+- Transitive dependencies MUST be materialized recursively: the dependencies of an artifact at `spec/{alias}/` MUST be placed under `spec/{alias}/spec/{sub-alias}/`, applying the same rule at every level of the dependency graph.
+- The on-disk location of an artifact is its nested filesystem path: a chain of `spec/{alias}` segments under the workspace root. For example, an artifact reached transitively through a dependency aliased `B` and its dependency aliased `D` materializes at `spec/B/spec/D/`.
+- Each artifact MUST be a full, physical copy of its repository contents at the resolved commit, placed directly under its materialization directory. The nested `spec/` subtree within that directory is machine-generated dependency scope and MUST NOT be treated as part of the artifact's repository contents. Implementations MUST NOT use symlinks or shared object stores to reference content located outside the project.
+- The lifetime of a reference copy MUST be tied to the project: deleting the project (or its `spec/` directory) MUST also remove all reference copies. Dependencies MUST be re-resolved by a subsequent install when their copies are removed.
 - Before writing an artifact, implementations MUST resolve any tag reference to a commit hash (see [Entity: GitReference](#entity-gitreference)) and MUST checkout the exact resolved commit.
 - Installations MUST update the project [lockfile](#concept-specman-lockfile) so that it reflects the fully resolved dependency graph, as defined in [Entity: Lockfile](#entity-lockfile).
 - Installing MUST be reproducible: given a lockfile and a `specman.json`, a re-install MUST produce the same set of reference copies, byte-for-byte, regardless of when or where it is run.
@@ -903,7 +902,7 @@ A lockfile records the fully resolved dependency graph of a project — the exac
 
 - Install and update operations MUST (re)generate the lockfile by resolving the direct references in `specman.json` and, recursively, all transitively referenced artifacts.
 - Each entry in the lockfile MUST record the resolved commit hash for the corresponding reference. When a reference specifies a tag, the hash MUST be the commit resolved from that tag at generation time.
-- Each entry MUST record its qualified alias path in the `path` field, from which the on-disk materialization location is derived.
+- Each entry MUST record its nested filesystem path in the `path` field, from which the on-disk materialization location is derived.
 - The lockfile MUST be written atomically so that a partially written file is never observable to other processes.
 - Implementations MUST NOT resolve tag references dynamically during an install that is driven by an existing lockfile; the locked hash MUST take precedence.
 

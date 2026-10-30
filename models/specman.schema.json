@@ -217,7 +217,7 @@
                 },
                 "path": {
                     "type": "string",
-                    "description": "The qualified alias path (the '::'-joined chain of aliases from the dependency root to this reference). For a direct reference this equals alias. Used to derive the on-disk materialization location."
+                    "description": "The nested filesystem path to the reference's materialization location, relative to the workspace root (for example spec/B/spec/D/). For a direct reference this equals spec/{alias}/. Used to derive the on-disk materialization location."
                 },
                 "url": {
                     "type": "string",

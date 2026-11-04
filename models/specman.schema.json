@@ -3,79 +3,95 @@
     "$id": "https://specman.dev/schemas/specman.json",
     "title": "SpecMan Project Manifest",
     "description": "Canonical JSON Schema for a specman.json project manifest file.",
-    "type": "object",
-    "required": [
-        "name"
-    ],
-    "properties": {
-        "$schema": {
-            "type": "string",
-            "description": "A relative file URL pointing to this schema."
-        },
-        "name": {
-            "type": "string",
-            "description": "The project name. Any UTF-8 string; free-form and human-readable."
-        },
-        "description": {
-            "type": "string",
-            "description": "A human-readable description of the project."
-        },
-        "tags": {
-            "type": "array",
-            "items": {
-                "type": "string"
-            },
-            "description": "Tags for categorization. Must not be null."
-        },
-        "spec": {
-            "$ref": "#/$defs/SpecProject"
-        },
-        "impl": {
-            "$ref": "#/$defs/ImplProject"
-        },
-        "overrides": {
-            "type": "array",
-            "items": {
-                "$ref": "#/$defs/OverrideEntry"
-            },
-            "description": "Explicit version resolutions applied during dependency resolution. May be absent or an empty array, but must not be null."
-        }
-    },
     "oneOf": [
         {
-            "title": "Specification",
-            "required": [
-                "spec"
-            ],
-            "not": {
-                "required": [
-                    "impl"
-                ]
-            },
-            "properties": {
-                "spec": {
-                    "$ref": "#/$defs/SpecProject"
-                }
-            }
+            "$ref": "#/$defs/SpecificationManifest"
         },
         {
-            "title": "Implementation",
-            "required": [
-                "impl"
-            ],
-            "not": {
-                "required": [
-                    "spec"
-                ]
-            },
-            "properties": {
-                "impl": {
-                    "$ref": "#/$defs/ImplProject"
-                }
-            }
+            "$ref": "#/$defs/ImplementationManifest"
         }
     ],
     "$defs": {
+        "SpecificationManifest": {
+            "type": "object",
+            "description": "A specification project manifest.",
+            "required": [
+                "name",
+                "spec"
+            ],
+            "properties": {
+                "$schema": {
+                    "type": "string",
+                    "description": "A relative file URL pointing to this schema."
+                },
+                "name": {
+                    "type": "string",
+                    "description": "The project name. Any UTF-8 string; free-form and human-readable."
+                },
+                "description": {
+                    "type": "string",
+                    "description": "A human-readable description of the project."
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "description": "Tags for categorization. Must not be null."
+                },
+                "spec": {
+                    "$ref": "#/$defs/SpecProject"
+                },
+                "overrides": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/$defs/OverrideEntry"
+                    },
+                    "description": "Explicit version resolutions applied during dependency resolution. May be absent or an empty array, but must not be null."
+                }
+            },
+            "additionalProperties": false
+        },
+        "ImplementationManifest": {
+            "type": "object",
+            "description": "An implementation project manifest.",
+            "required": [
+                "name",
+                "impl"
+            ],
+            "properties": {
+                "$schema": {
+                    "type": "string",
+                    "description": "A relative file URL pointing to this schema."
+                },
+                "name": {
+                    "type": "string",
+                    "description": "The project name. Any UTF-8 string; free-form and human-readable."
+                },
+                "description": {
+                    "type": "string",
+                    "description": "A human-readable description of the project."
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "description": "Tags for categorization. Must not be null."
+                },
+                "impl": {
+                    "$ref": "#/$defs/ImplProject"
+                },
+                "overrides": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/$defs/OverrideEntry"
+                    },
+                    "description": "Explicit version resolutions applied during dependency resolution. May be absent or an empty array, but must not be null."
+                }
+            },
+            "additionalProperties": false
+        },
         "GitReference": {
             "type": "object",
             "required": [
@@ -262,6 +278,5 @@
             },
             "additionalProperties": false
         }
-    },
-    "additionalProperties": false
+    }
 }

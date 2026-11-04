@@ -43,6 +43,7 @@
     },
     "oneOf": [
         {
+            "title": "Specification",
             "required": [
                 "spec"
             ],
@@ -58,6 +59,7 @@
             }
         },
         {
+            "title": "Implementation",
             "required": [
                 "impl"
             ],

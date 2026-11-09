@@ -249,7 +249,7 @@ An implementation is, as the name suggests, an implementation of a specification
 
 - Each implementation MUST declare the specifications it implements via the `impl.implements` array in `specman.json`, as defined in [Entity: ImplProject](#entity-implproject).
 - Each entry in `implements` MUST contain a [GitReference](#entity-gitreference) pointing to a specification repository.
-- When a core specification references other specifications, the implementation MUST either implement the referenced specifications itself (by adding them to `implements`) or determine whether compliant implementations already exist. If such an implementation exists, it SHOULD be referenced via `utilizes` instead of reinventing it.
+- An implementation is responsible only for the constraint groups of the specifications it directly references in `implements`. Specifications reached only transitively (specifications referenced by a directly-implemented specification) are contextual and impose no compliance obligation on the implementation.
 - Specifications included in the `implements` list MUST be intended for implementation. Specifications needed only for background context SHOULD remain in the specification dependency graph rather than the implementation's `implements`.
 
 ### Implementation Headings
@@ -302,9 +302,8 @@ Examples:
 
 !concept-implementations.references.model:
 
-- Implementations declare relationships to other artifacts through the `impl.implements` and `impl.utilizes` arrays in `specman.json`.
+- Implementations declare the specifications they target through the `impl.implements` array in `specman.json`.
 - `implements`: specifications this implementation targets. Each entry MUST be an [ImplementsEntry](#entity-implementsentry) containing a [GitReference](#entity-gitreference) that points to a specification.
-- `utilizes`: other implementations this implementation depends on. Each entry MUST be a [UtilizesEntry](#entity-utilizesentry) containing a [GitReference](#entity-gitreference) that points to an implementation.
 - An implementation SHOULD prefer referencing the specification over its implementation when:
   - The implementation of a specification is irrelevant to the current implementation being defined.
   - The specification defines access to the underlying implementation in a format usable by the implementation being defined.
@@ -473,7 +472,6 @@ Represents an implementation project within `specman.json`.
 !entity-implproject.fields:
 
 - `implements` (array of ImplementsEntry, REQUIRED): The specifications this implementation targets. MUST contain at least one entry.
-- `utilizes` (array of UtilizesEntry, OPTIONAL): Other implementations this implementation depends on. MAY be absent or an empty array, but MUST NOT be null.
 
 ## Entity: ImplementsEntry
 
@@ -483,15 +481,6 @@ Describes one specification being implemented.
 
 - `ref` (GitReference, REQUIRED): The specification being implemented. The referenced artifact MUST be a specification.
 - `constraints` (array of string, OPTIONAL): A list of regex patterns. Each constraint group identifier from the target specification is tested against the full dot-delimited constraint group identifier (e.g., `concept-slug.category`). If a constraint group matches at least one regex, it MUST be included in compliance checking. If no regex matches a constraint group, that constraint group MUST NOT be tracked by specman tooling. If this field is absent or an empty array, implementations MUST treat it as functionally equivalent to `[".*"]` (i.e., all constraint groups are included). This field MUST NOT be null.
-
-## Entity: UtilizesEntry
-
-Describes one implementation being utilized.
-
-!entity-utilizesentry.fields:
-
-- `ref` (GitReference, REQUIRED): The implementation being utilized. The referenced artifact MUST be an implementation.
-- `ignore_constraints` (array of string, OPTIONAL): A list of regex patterns. When evaluating compliance, constraint groups from the utilized implementation that match any of these patterns MUST be filtered out and ignored. If the utilized implementation references the same specification as the current implementation but with a different git reference (determined by matching git host and path from `url`, not by name), implementations MUST warn the user during every explicit schema validation or upon pulling dependencies. This field MAY be absent or an empty array, but MUST NOT be null.
 
 ## Entity: Lockfile
 
@@ -565,7 +554,7 @@ Dependency mapping provides visibility into upstream and downstream relationship
 - Dependency lookups MUST return results in upstream, downstream, and aggregate forms to support targeted impact analysis.
 - Tree traversal APIs SHOULD expose both hierarchical and flattened views to accommodate varied client needs.
 - Implementations MUST expose a callable dependency-tree builder that accepts a path to a `specman.json` file, a git reference, or an alias that resolves through the project lockfile, and normalizes that locator before traversal begins.
-- The tree builder MUST parse `specman.json` for `spec.references` (for specifications) or `impl.implements` and `impl.utilizes` (for implementations), recursively resolve each upstream artifact, and continue traversal until the graph is fully explored or a cycle is encountered.
+- The tree builder MUST parse `specman.json` for `spec.references` (for specifications) or `impl.implements` (for implementations), recursively resolve each upstream artifact, and continue traversal until the graph is fully explored or a cycle is encountered.
 - Resolvers MUST resolve git references by looking them up in the local project's [lockfile](#concept-specman-lockfile) first, then in the project-local `spec/` directory. If a reference is not found locally, the resolver MAY trigger a clone via [SpecMan Installing](#concept-specman-installing).
 - Cycle detection MUST terminate traversal immediately and return a descriptive error that includes the partial tree gathered so far so callers can remediate invalid dependency graphs.
 - When a referenced dependency or implementation lacks a `specman.json`, or when the dependency cannot be resolved, the tree builder MUST still add the artifact to the dependency set using the best available identifier and annotate the entry to indicate metadata was unavailable.
@@ -779,7 +768,7 @@ Metadata mutation ensures `specman.json` for specifications and implementations 
 
 - Metadata mutation MUST be supported for specification and implementation artifacts.
 - For specifications, metadata mutation MUST support updating `name`, `description`, `tags`, and adding/removing entries in the `spec.references` list.
-- For implementations, metadata mutation MUST support updating `name`, `description`, `tags`, and adding/removing entries in the `impl.implements` and `impl.utilizes` lists.
+- For implementations, metadata mutation MUST support updating `name`, `description`, `tags`, and adding/removing entries in the `impl.implements` list.
 - For both specifications and implementations, metadata mutation MUST support adding/removing entries in the top-level `overrides` list.
 
 ## Concept: Validation Anchors
@@ -849,7 +838,7 @@ Workspace status provides a holistic health check of the workspace, aggregating 
 - When `references` validation is enabled, the status check MUST perform reference validation on all artifacts, ensuring that:
   - All inline links to workspace files resolve to existing files.
   - All inline links to HTTP(S) resources are valid URLs (connectivity checks MAY be optional or configurable).
-  - All artifact dependencies (specification `references`) and implementation `implements`/`utilizes` resolve to existing, valid artifacts.
+  - All artifact dependencies (specification `references`) and implementation `implements` resolve to existing, valid artifacts.
 - When `cycles` validation is enabled, the status check MUST construct the full dependency graph and verify that no cyclic dependencies exist between specifications.
 - When `compliance` validation is enabled, the status check MUST verify compliance coverage for every implementation:
   - It MUST extract all constraint groups from the implementation's governing specification(s) only; constraint groups from transitive specification dependencies MUST NOT be included.

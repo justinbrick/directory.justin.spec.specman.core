@@ -147,13 +147,6 @@
                         "$ref": "#/$defs/ImplementsEntry"
                     },
                     "description": "The specifications this implementation targets. Must contain at least one entry."
-                },
-                "utilizes": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/$defs/UtilizesEntry"
-                    },
-                    "description": "Other implementations this implementation depends on. May be absent or an empty array, but must not be null."
                 }
             },
             "additionalProperties": false
@@ -174,26 +167,6 @@
                         "type": "string"
                     },
                     "description": "A list of regex patterns. Matched against full dot-delimited constraint group identifiers (e.g., concept-slug.category). If absent or empty, functionally equivalent to ['.*'] (all constraint groups are included). Must not be null."
-                }
-            },
-            "additionalProperties": false
-        },
-        "UtilizesEntry": {
-            "type": "object",
-            "required": [
-                "ref"
-            ],
-            "properties": {
-                "ref": {
-                    "$ref": "#/$defs/GitReference",
-                    "description": "The implementation being utilized. The referenced artifact must be an implementation."
-                },
-                "ignore_constraints": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    },
-                    "description": "A list of regex patterns. Constraint groups from the utilized implementation that match any of these patterns are filtered out and ignored during compliance evaluation. May be absent or an empty array, but must not be null."
                 }
             },
             "additionalProperties": false

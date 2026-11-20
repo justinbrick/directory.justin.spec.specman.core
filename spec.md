@@ -1,6 +1,6 @@
 # Specification — SpecMan Core
 
-The SpecMan Core specification defines both the canonical data model and the platform capabilities that guarantee consistent interactions with SpecMan artifacts. Part 1 establishes the foundational data structures — workspaces, project manifests, specifications, implementations, git references, and SpecMan installing — along with their metadata, naming, and layout rules. Part 2 builds on those structures to define the behavioral guarantees implementers MUST honor: workspace discovery, dependency mapping, reference validation, template orchestration, lifecycle automation, structure indexing, metadata mutation, compliance reporting, workspace status, and SpecMan installing.
+The SpecMan Core specification defines both the canonical data model and the platform capabilities that guarantee consistent interactions with SpecMan artifacts. Part 1 establishes the foundational data structures — workspaces, project manifests, specifications, implementations, git references, and SpecMan installing — along with their metadata, naming, and layout rules. Part 2 builds on those structures to define the behavioral guarantees implementers MUST honor: workspace discovery, dependency mapping, reference validation, lifecycle automation, structure indexing, metadata mutation, compliance reporting, workspace status, and SpecMan installing.
 
 ## Terminology & References
 
@@ -623,37 +623,6 @@ Reference validation ensures that references embedded in Markdown artifacts — 
 - Errors SHOULD be grouped by type (unsupported scheme, workspace boundary violation, missing file, unreachable HTTPS, unknown fragment).
 - The validator MUST NOT mutate the validated artifacts.
 
-## Concept: Template Orchestration
-
-Template orchestration governs how reusable content is discovered and rendered.
-
-!concept-template-orchestration.requirements:
-
-- Templates MUST declare substitution tokens using double braces (`{{token_name}}`), and rendering engines MUST refuse to materialize output until every declared token is supplied.
-- Template consumers MUST accept locator inputs expressed as absolute filesystem paths, workspace-relative paths rooted at the discovered workspace, HTTPS URLs, or packaged-default identifiers bundled with the runtime.
-- When creating specifications or implementations, the orchestrator MUST search for workspace-managed overrides under `.specman/templates/` in the following order: (1) artifact-specific Markdown files (for example `.specman/templates/spec.md` and `.specman/templates/impl.md` plus any nested directories the workspace defines), (2) uppercase pointer files (`SPEC` and `IMPL`) whose contents resolve to workspace-relative paths or HTTPS URLs, and (3) packaged defaults embedded with the SpecMan Core runtime. Packaged defaults MUST be versioned with the runtime, remain read-only, and MAY be delivered via resources compiled into the binary or co-located artifacts inside the packaged application.
-- Implementations MUST expose pointer-file lifecycle helpers for every artifact profile so callers can add new `SPEC` or `IMPL` pointer files, update (set) their target locators, or remove them without editing the filesystem manually.
-- Pointer update operations MUST persist uppercase pointer files under `.specman/templates/`, enforce the same locator validation rules defined for runtime resolution (workspace-bound filesystem paths and reachable HTTPS Markdown), and MUST refresh any `.specman/cache/templates/` entries referencing the affected locator before signaling success.
-- Pointer removal operations MUST delete the targeted pointer file, purge cached remote content that referenced it, and MUST document the resulting fallback search order so clients know which template source will be used next. When the removal would leave the orchestration layer without any valid template source, the helper MUST fail with a descriptive error instead of leaving an invalid pointer state.
-- Pointer-file lifecycle helpers MUST surface structured success and failure results — including validation errors or fallback descriptions — so CLI layers and APIs can relay operator-facing guidance without re-parsing filesystem state.
-- Pointer files MUST be re-read on every invocation so workspace changes take effect without restarting tooling. Implementations MUST validate that filesystem locators remain inside the workspace root and that HTTPS locators are reachable plaintext Markdown before rendering.
-- When a pointer file references an HTTPS resource, the fetched Markdown MUST be cached under `.specman/cache/templates/` using deterministic filenames (for example, hashing the URL). Cache entries MUST store the downloaded content verbatim together with the source locator and last-refresh metadata, and they MUST be reused for subsequent invocations until the pointer file content or remote resource changes.
-- Template orchestration MUST refresh cached remote content whenever the pointer file changes or the remote server signals a new version (for example via `ETag` or `Last-Modified`). If refresh attempts fail, tooling MUST fall back to the last known-good cache entry before reverting to packaged defaults.
-- Template rendering workflows MUST preserve HTML comment directives present in the source templates until each directive is satisfied. After fulfilling a directive, tooling MAY remove or replace the associated comment but MUST NOT drop unsatisfied instructions.
-- Special-purpose template functions SHOULD exist for common scenarios such as creating specifications and implementations.
-- Template metadata (required tokens, locator provenance, cache path) MAY be cached for the duration of a command invocation but MUST include the workspace root and template version in the cache key. Tooling MUST NOT reuse metadata caches across different workspaces unless both the template version and workspace identifier match.
-
-!concept-template-orchestration.ai-instruction-directives:
-
-- Template guidance for automated agents MUST be conveyed inside HTML comments (`<!-- ... -->`) that sit adjacent to the mutable region they govern and MUST NOT leak into rendered Markdown.
-- Rendering engines MUST preserve HTML instruction comments until each directive is satisfied; if a directive cannot be satisfied, tooling MUST fail the operation rather than silently dropping the comment.
-
-!concept-template-orchestration.token-contract:
-
-- The effective template descriptor defines a closed token set; lifecycle or MCP clients MUST reject substitutions for tokens that are not declared by the descriptor.
-- Token substitution covers Markdown body content only. Project metadata (`specman.json` for specs/impls) MUST be produced or mutated by lifecycle workflows after template rendering, not by injecting `{{token}}` placeholders.
-- When callers supply token data, the implementation MUST surface validation errors verbatim whenever a required token is missing or an unknown token is supplied.
-
 ## Concept: Deterministic Execution
 
 Deterministic execution codifies behavioral guarantees so downstream consumers can rely on predictable, side-effect-aware APIs.
@@ -669,13 +638,10 @@ Lifecycle automation standardizes creation and deletion workflows for specificat
 
 !concept-lifecycle-automation.requirements:
 
-- Automated creation flows MUST require an associated template locator and MUST validate that required tokens are supplied.
-- Lifecycle operations MUST enforce template usage for all new specifications and implementations so generated artifacts remain data-model compliant.
 - Implementations MUST expose user-facing deletion workflows for specifications and implementations so that every artifact type can be removed with the same rigor applied to creation.
 - Creation tooling MUST cover both artifact types (specifications and implementations) and MUST enforce the naming and metadata rules defined by Part 1 of this specification.
 - Creation workflows MUST persist generated Markdown artifacts and supporting metadata into the canonical workspace locations (the path specified by `spec.index` for specifications and `impl.md` at the repository root for implementations) using the paths returned by workspace discovery.
-- When a pointer file downloads content from an HTTPS locator, Lifecycle automation MUST route the rendered template through the `.specman/cache/templates/` store before writing artifacts so repeated invocations reuse the cached copy unless the pointer or upstream content changes.
-- Persistence helpers MUST write the rendered template output (with all required tokens populated) together with its project metadata; persisting additional representations of entities, concepts, or other runtime data structures is out of scope for this specification.
+- Persistence helpers MUST write the generated output together with its project metadata; persisting additional representations of entities, concepts, or other runtime data structures is out of scope for this specification.
 - Lifecycle automation MUST provide direct integrations with the metadata mutation capabilities described in [Concept: Metadata Mutation](#concept-metadata-mutation).
 - Deletion workflows MUST reuse dependency mapping services, refuse to proceed when dependent artifacts exist, and MUST return a dependency tree describing all impacted consumers whenever a removal is blocked.
 - Deletion workflows MUST ensure the targeted artifact and any associated metadata are removed from their canonical workspace locations once safety checks pass.
@@ -683,8 +649,8 @@ Lifecycle automation standardizes creation and deletion workflows for specificat
 
 !concept-lifecycle-automation.metadata-generation:
 
-- Creation workflows MUST generate or merge a `specman.json` file after template rendering so that every artifact persists the metadata mandated by Part 1 and governing specifications.
-- Templates MUST NOT embed `specman.json` content; lifecycle automation and metadata mutation workflows are the authoritative mechanisms for writing and updating metadata.
+- Creation workflows MUST generate or merge a `specman.json` file so that every artifact persists the metadata mandated by Part 1 and governing specifications.
+- Lifecycle automation and metadata mutation workflows are the authoritative mechanisms for writing and updating metadata.
 - Metadata mutation helpers MUST update the `specman.json` in-place and MUST continue to enforce the workspace-boundary and git-reference validation rules defined elsewhere in this specification.
 
 ## Concept: SpecMan Structure
@@ -932,34 +898,13 @@ Aggregated representation of upstream and downstream relationships for a given a
 - MUST expose traversal helpers to retrieve upstream-only, downstream-only, or combined views.
 - SHOULD provide serialization compatible with this specification for interchange.
 
-## Entity: TemplateDescriptor
-
-Metadata describing how templates are located and rendered.
-
-!entity-templatedescriptor.requirements:
-
-- MUST record the locator URI or absolute path and the intended template scenario (specification or implementation).
-- SHOULD list required substitution tokens so callers MAY validate inputs before rendering.
-- MAY reference helper functions that provide contextual data during template expansion.
-- When a cached remote template is used, the descriptor MUST record the cache file path and validator metadata supplied by the associated `TemplateCache` entry.
-
-## Entity: TemplateCache
-
-Cache store that retains remote template content referenced by pointer files.
-
-!entity-templatecache.requirements:
-
-- MUST persist downloads inside `.specman/cache/templates/` using deterministic filenames derived from the source locator.
-- MUST record the original locator, retrieval timestamp, and any validator metadata (for example `ETag`) so Template Orchestration can determine staleness before reuse.
-- SHOULD expose purge and refresh helpers so lifecycle controllers can invalidate entries when pointer files change or when users request a clean refresh.
-
 ## Entity: LifecycleController
 
 Controller responsible for enforcing lifecycle policies across specifications and implementations.
 
 !entity-lifecyclecontroller.requirements:
 
-- MUST orchestrate create and delete operations for every artifact type, delegating to dependency mapping and templating subsystems.
+- MUST orchestrate create and delete operations for every artifact type, delegating to dependency mapping subsystems.
 - MUST terminate deletion attempts that would orphan dependents and MUST return the blocking dependency tree to the caller.
 - MUST expose deletion entry points that mirror creation workflows so operators have symmetrical controls for specifications and implementations.
 - SHOULD integrate auditing hooks that capture lifecycle events for compliance tracking.
@@ -1040,5 +985,3 @@ Configuration options for reference validation.
 Migration guides MAY accompany minor releases to help downstream integrators adopt new optional capabilities.
 
 Implementers MAY provide caching or indexing strategies for dependency trees when doing so preserves freshness guarantees.
-
-Template repositories SHOULD be discoverable through configuration so administrators CAN extend or swap template sources without code changes.
